@@ -45,12 +45,23 @@
     <button class="ok" type="button" id="bar-ok">Permite</button>
     <button class="x" type="button" id="bar-x" aria-label="Nu acum">✕</button>
   </div>
+  <div id="help" role="alert" hidden style="position:fixed;left:8px;right:8px;top:calc(8px + env(safe-area-inset-top, 0px));z-index:3;max-width:560px;margin:0 auto;padding:12px 14px;border-radius:14px;background:#fff;color:#1D2B4F;font:15px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.3)">
+    <p style="margin:0 0 10px">Aplicația se încarcă greu sau Google a afișat o eroare.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" id="help-retry" style="min-height:44px;padding:0 16px;border:0;border-radius:999px;background:#1D2B4F;color:#fff;font:inherit;font-weight:700">Reîncearcă</button>
+      <a id="help-open" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid #1D2B4F;color:#1D2B4F;font-weight:700;text-decoration:none">Deschide direct</a>
+    </div>
+  </div>
   <noscript><p style="color:#fff;padding:24px">Aplicația are nevoie de JavaScript activat.</p></noscript>
 <script>
 (function () {
   'use strict';
   // ► Adresa aplicației (linkul /exec). Înlocuiește cu linkul vostru:
   var APP_URL = 'https://script.google.com/macros/s/AKfycbxs0Pn6GEzt_X5OO0sMk7YgncsEDSOFOVnO0tKusO3Vbn_FVTLrOSwgsWYaq_Usg4EF/exec';
+
+  // Linkul copiat din bara browserului poate conține contul Google („/macros/u/1/s/…”): îl curățăm.
+  // Cu implementarea „Oricine” (fără cont Google), adresa curată se deschide pe orice telefon, cu oricâte conturi.
+  APP_URL = APP_URL.replace(/\/macros\/u\/\d+\/s\//, '/macros/s/');
 
   var TITLE = 'Caiet de ucenicie';
   var GOOGLE = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/;   // de aici vine aplicația (cadrul Apps Script)
@@ -210,6 +221,15 @@
     if (!linked || now - lastPing > 20000) { ping(frame.contentWindow, 0); lastPing = now; }
   }, 1500);
   frame.addEventListener('load', function () { linked = false; });
+
+  /* ── plasă de siguranță: dacă aplicația nu răspunde (eroare Google în cadru, rețea), oferim reîncercarea ── */
+  var help = document.getElementById('help');
+  document.getElementById('help-open').href = APP_URL;
+  document.getElementById('help-retry').addEventListener('click', function () { help.hidden = true; frame.src = APP_URL; armHelp(); });
+  var helpTimer = null;
+  function armHelp() { clearTimeout(helpTimer); helpTimer = setTimeout(function () { if (!linked) help.hidden = false; }, 20000); }
+  armHelp();
+  window.addEventListener('message', function (e) { if (GOOGLE.test(e.origin) && e.data && e.data.tip === 'caiet-necitite') { help.hidden = true; clearTimeout(helpTimer); } });
   // permisiunea schimbată din setări cât aplicația era în fundal
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { tellState(); ensurePush(false, false); } });
 })();
