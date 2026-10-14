@@ -14,30 +14,34 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <!--
     Pagina-ramă a aplicației „Caiet de ucenicie” (Biserica Betel Constanța).
-    Deschide aplicația Google Apps Script pe tot ecranul și afișează numărul mesajelor necitite:
+    Deschide aplicația Google Apps Script pe tot ecranul și afișează numărul noutăților (mesaje, cereri, invitații):
       - în titlul filei: „(3) Caiet de ucenicie”;
       - pe favicon (iconița filei), cu o bulină roșie;
-      - pe iconița aplicației instalate, unde browserul permite (calculator: Chrome/Edge; iPhone: iOS 16.4+ cu notificări permise).
-    Aplicația trimite doar numărul (postMessage), iar rama acceptă mesaje numai de la serverele Google ale aplicației.
+      - pe iconița aplicației instalate (setAppBadge): iPhone / iPad 16.4+ cu notificări permise, Windows / macOS;
+      - prin notificări push (sw.js), și cu aplicația închisă: pe iPhone cifră pe iconiță, pe Android bulină pe iconiță.
+    Aplicația trimite doar numere și cheia publică de notificări (postMessage); rama acceptă mesaje numai de la cadrul ei.
 
     ► SINGURA SETARE: adresa aplicației (linkul /exec din Apps Script → Implementare → Gestionează implementările).
+    Fișiere: index.html, sw.js, manifest.webmanifest, iconițele (icon-192/512, icon-maskable-512, apple-touch-icon,
+    favicon-64, badge-96 – iconița albă, transparentă, din bara de notificări Android).
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #1D2B4F; overflow: hidden; }
     #app { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #E8ECF2; }
     #bar { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 2; display: flex; align-items: center; gap: 8px;
+      max-width: 560px; margin: 0 auto;
       padding: 10px 12px; border-radius: 14px; background: #1D2B4F; color: #fff; font: 15px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
     #bar p { margin: 0; flex: 1; }
-    #bar button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; font: inherit; font-weight: 700; cursor: pointer; }
+    #bar button { min-height: 44px; padding: 0 14px; border: 0; border-radius: 999px; font: inherit; font-weight: 700; cursor: pointer; }
     #bar .ok { background: #8DBB6E; color: #10200A; }
-    #bar .x { background: transparent; color: #fff; padding: 0 8px; }
+    #bar .x { background: transparent; color: #fff; padding: 0 10px; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <iframe id="app" title="Caiet de ucenicie" allow="geolocation; clipboard-read; clipboard-write; web-share; fullscreen; autoplay"></iframe>
-  <div id="bar" role="region" aria-label="Cifra pe iconiță" hidden>
-    <p>Vrei să vezi pe iconiță câte mesaje noi ai?</p>
+  <div id="bar" role="region" aria-label="Notificări" hidden>
+    <p>Vrei o notificare și cifra pe iconiță când ai mesaje noi?</p>
     <button class="ok" type="button" id="bar-ok">Permite</button>
     <button class="x" type="button" id="bar-x" aria-label="Nu acum">✕</button>
   </div>
@@ -46,14 +50,30 @@
 (function () {
   'use strict';
   // ► Adresa aplicației (linkul /exec). Înlocuiește cu linkul vostru:
-  var APP_URL = 'https://script.google.com/macros/s/AKfycbxs0Pn6GEzt_X5OO0sMk7YgncsEDSOFOVnO0tKusO3Vbn_FVTLrOSwgsWYaq_Usg4EF/exec';
+  var APP_URL = 'https://script.google.com/macros/s/INLOCUIESTE_CU_ID-UL_IMPLEMENTARII/exec';
 
   var TITLE = 'Caiet de ucenicie';
   var GOOGLE = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/;   // de aici vine aplicația (cadrul Apps Script)
   var frame = document.getElementById('app');
   frame.src = APP_URL;
 
-  /* ── numărul mesajelor necitite ── */
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* stocare indisponibilă */ } }
+
+  /* ── platforma ── */
+  var standalone = window.navigator.standalone === true || (!!window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  var iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var android = /Android/i.test(navigator.userAgent);
+  var pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
+  var swReg = null, pushKey = '', subscribed = false, appWin = null, appOrigin = '';
+
+  /** Starea notificărilor, trimisă aplicației (Profil → „Notificări pe acest dispozitiv”). */
+  function pushState() {
+    return { suportat: pushOk, permisiune: pushOk ? Notification.permission : 'unsupported', standalone: standalone,
+      ios: iOS, android: android, desktop: !iOS && !android, abonat: subscribed };
+  }
+
+  /* ── cifra: titlu, favicon, iconița aplicației ── */
   var base = new Image(), count = 0, linked = false, lastPing = 0;
   base.src = 'favicon-64.png';
   function favicon(n) {
@@ -77,20 +97,110 @@
     try {
       if ('setAppBadge' in navigator) { if (n) navigator.setAppBadge(n).catch(function () {}); else navigator.clearAppBadge().catch(function () {}); }
     } catch (e) { /* fără cifră pe iconița aplicației */ }
+    // totul e citit: notificările vechi dispar (pe Android dispare și bulina de pe iconiță)
+    if (!n && swReg && swReg.getNotifications) {
+      swReg.getNotifications({ tag: 'caiet' }).then(function (list) { list.forEach(function (x) { x.close(); }); }).catch(function () {});
+    }
   }
   base.onload = function () { if (count) favicon(count); };
 
-  window.addEventListener('message', function (e) {
-    if (!GOOGLE.test(e.origin) || !e.data || e.data.tip !== 'caiet-necitite') return;
-    var n = Number(e.data.n);
-    if (!(n >= 0 && n < 100000 && Math.floor(n) === n)) return;
-    linked = true;
-    show(n);
+  /* ── Service Worker (notificările cu aplicația închisă) ── */
+  if (pushOk) {
+    navigator.serviceWorker.register('sw.js?app=' + encodeURIComponent(APP_URL), { scope: './' })
+      .then(function () { return navigator.serviceWorker.ready; })
+      .then(function (reg) { swReg = reg; return reg.pushManager.getSubscription(); })
+      .then(function (sub) { subscribed = !!sub && Notification.permission === 'granted'; tellState(); ensurePush(false, true); })
+      .catch(function (e) { console.warn('Service Worker: ' + e); });
+  }
+
+  function b64u(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '=';
+    var raw = atob(s), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function sameKey(buf, key) {
+    if (!buf) return false;
+    var a = new Uint8Array(buf), b = b64u(key);
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+  /** Abonarea (cu cheia serverului) și trimiterea adresei către aplicație, care o leagă de cont. */
+  // announce: trimitem adresa aplicației (la fiecare cheie primită = la fiecare intrare în cont); altfel doar dacă e nouă
+  var failOffered = false;
+  function ensurePush(fromClick, announce) {
+    if (!pushOk || !swReg || !pushKey || Notification.permission !== 'granted') return Promise.resolve(false);
+    var fresh = false;
+    return swReg.pushManager.getSubscription().then(function (sub) {
+      if (sub && sameKey(sub.options && sub.options.applicationServerKey, pushKey)) return sub;
+      fresh = true;
+      return (sub ? sub.unsubscribe() : Promise.resolve()).then(function () {
+        return swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(pushKey) });
+      });
+    }).then(function (sub) {
+      subscribed = true;
+      if (appWin && (announce || fresh || fromClick)) appWin.postMessage({ tip: 'caiet-push-abonament', endpoint: sub.endpoint, platforma: (iOS ? 'ios' : android ? 'android' : 'desktop') + (standalone ? '-app' : '') }, appOrigin);
+      tellState();
+      return true;
+    }).catch(function (e) {
+      console.warn('Abonare notificări: ' + e);
+      subscribed = false; tellState();
+      if (!fromClick && !failOffered) { failOffered = true; offer(true); }   // unele sisteme cer o atingere și pentru abonare
+      return false;
+    });
+  }
+  function tellState() { if (appWin) appWin.postMessage({ tip: 'caiet-push-stare', push: pushState() }, appOrigin); }
+
+  /* ── bara „Permite” (permisiunea se poate cere doar la o atingere, în pagina de sus) ── */
+  var bar = document.getElementById('bar');
+  function offer(force) {
+    if (!pushOk || !pushKey || Notification.permission === 'denied') return;
+    if (Notification.permission === 'granted' && subscribed) return;
+    if (!force && (lsGet('caiet.badgeAsk') === '1' || !standalone)) return;   // automat doar în aplicația instalată, o singură dată
+    bar.hidden = false;
+  }
+  function hideBar() { bar.hidden = true; lsSet('caiet.badgeAsk', '1'); }
+  document.getElementById('bar-x').addEventListener('click', hideBar);
+  document.getElementById('bar-ok').addEventListener('click', function () {
+    hideBar();
+    Notification.requestPermission().then(function (p) {
+      tellState();
+      if (p === 'granted') ensurePush(true, true).then(function () { show(count); });
+    }).catch(function () {});
   });
 
-  /* ── „salutul”: aplicația (adânc în cadrele Google) află că e în ramă și îi trimite numărul ── */
+  /* ── mesajele aplicației: doar din cadrul nostru (oricât de adânc în cadrele Google) ── */
+  function fromOurFrame(src) {
+    var w = src;
+    for (var i = 0; i < 6 && w; i++) {
+      if (w === frame.contentWindow) return true;
+      try { if (w === w.parent) return false; w = w.parent; } catch (e) { return false; }
+    }
+    return false;
+  }
+  window.addEventListener('message', function (e) {
+    if (!GOOGLE.test(e.origin) || !e.data || !fromOurFrame(e.source)) return;
+    var d = e.data;
+    if (d.tip === 'caiet-necitite') {
+      var n = Number(d.n);
+      if (!(n >= 0 && n < 100000 && Math.floor(n) === n)) return;
+      linked = true; appWin = e.source; appOrigin = e.origin;
+      show(n);
+      return;
+    }
+    if (d.tip === 'caiet-push-cheie' && typeof d.cheie === 'string' && /^[A-Za-z0-9_-]{80,100}$/.test(d.cheie)) {
+      appWin = e.source; appOrigin = e.origin; pushKey = d.cheie;
+      tellState();
+      if (pushOk && Notification.permission === 'granted') ensurePush(false, true); else setTimeout(function () { offer(false); }, 4000);
+      return;
+    }
+    if (d.tip === 'caiet-push-arata') { appWin = e.source; appOrigin = e.origin; offer(true); }
+  });
+
+  /* ── „salutul”: aplicația (adânc în cadrele Google) află că e în ramă și ce poate dispozitivul ── */
   function ping(w, depth) {
-    try { w.postMessage({ tip: 'caiet-rama-salut' }, '*'); } catch (e) { /* cadru indisponibil */ }
+    try { w.postMessage({ tip: 'caiet-rama-salut', push: pushState() }, '*'); } catch (e) { /* cadru indisponibil */ }
     if (depth >= 4) return;
     try { for (var i = 0; i < w.frames.length; i++) ping(w.frames[i], depth + 1); } catch (e) { /* cadru indisponibil */ }
   }
@@ -100,22 +210,8 @@
     if (!linked || now - lastPing > 20000) { ping(frame.contentWindow, 0); lastPing = now; }
   }, 1500);
   frame.addEventListener('load', function () { linked = false; });
-
-  /* ── iPhone: cifra pe iconița de pe ecran apare doar după acordul pentru notificări ── */
-  var bar = document.getElementById('bar');
-  var standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
-  var iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  var asked = false;
-  try { asked = localStorage.getItem('caiet.badgeAsk') === '1'; } catch (e) { asked = false; }
-  if (iOS && standalone && 'setAppBadge' in navigator && window.Notification && Notification.permission === 'default' && !asked) {
-    setTimeout(function () { bar.hidden = false; }, 4000);
-  }
-  function hideBar() { bar.hidden = true; try { localStorage.setItem('caiet.badgeAsk', '1'); } catch (e) { /* */ } }
-  document.getElementById('bar-x').addEventListener('click', hideBar);
-  document.getElementById('bar-ok').addEventListener('click', function () {
-    hideBar();
-    Notification.requestPermission().then(function () { show(count); }).catch(function () {});
-  });
+  // permisiunea schimbată din setări cât aplicația era în fundal
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { tellState(); ensurePush(false, false); } });
 })();
 </script>
 </body>
