@@ -72,6 +72,8 @@
     .label { margin: 0; font-size: .8125rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
     .title { margin: 2px 0 0; font: 700 1.25rem/1.25 var(--serif); overflow-wrap: anywhere; }
     .meta { margin: 2px 0 0; color: var(--ink-2); font-size: .9375rem; overflow-wrap: anywhere; }
+    .cred { margin: 4px 0 0; color: var(--ink-3, var(--ink-2)); font-size: .8125rem; line-height: 1.4; overflow-wrap: anywhere; }
+    .cred:empty { display: none; }
     .bar { margin-top: 18px; }
     .track { height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
     .track b { display: block; height: 100%; width: 0; background: var(--sprout-fill); }
@@ -138,6 +140,7 @@
             <p class="label" id="mode">Acum în direct</p>
             <p class="title" id="title">Se încarcă…</p>
             <p class="meta" id="meta"></p>
+            <p class="cred" id="cred"></p>
           </div>
         </div>
         <div class="bar" aria-hidden="true">
@@ -201,12 +204,18 @@
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function notice(text, err) { var n = $('notice'); n.hidden = !text; n.textContent = text || ''; n.classList.toggle('err', !!err); }
 
+  function str(v, n) { return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : ''; }
+  /** Cine cântă, cu mențiunea „cover” când cântarea e a altor autori. */
+  function who(p) { return p.autor ? p.autor + (p.cover ? ' · cover' : '') : p.cover ? 'Cover' : ''; }
+  /** Autorii cântării (text și muzică), traducerea și versiunea originală. */
+  function credits(p) { return [p.autori ? 'Autori: ' + p.autori : '', p.traducere ? 'Traducerea: ' + p.traducere : '', p.original ? 'Original: ' + p.original : ''].filter(Boolean).join(' · '); }
   /** Validează playlistul: doar adrese https și durate pozitive. */
   function clean(j) {
     var piese = (j && Array.isArray(j.piese) ? j.piese : []).filter(function (p) {
       return p && typeof p.titlu === 'string' && /^https:\/\//.test(p.url || '') && Number(p.durata) > 0;
     }).map(function (p) {
-      return { titlu: p.titlu, autor: typeof p.autor === 'string' ? p.autor : '', data: typeof p.data === 'string' ? p.data : '', url: p.url, durata: Number(p.durata), sursa: /^https:\/\//.test(p.sursa || '') ? p.sursa : '' };
+      return { titlu: p.titlu, autor: str(p.autor, 120), data: typeof p.data === 'string' ? p.data : '', url: p.url, durata: Number(p.durata), sursa: /^https:\/\//.test(p.sursa || '') ? p.sursa : '',
+        cover: p.cover === true, autori: str(p.autori, 200), traducere: str(p.traducere, 120), original: str(p.original, 120) };
     });
     var start = Date.parse(j && j.start) || Date.UTC(2026, 0, 1);
     var total = piese.reduce(function (n, p) { return n + p.durata; }, 0);
@@ -241,15 +250,16 @@
     var d = st.data[st.canal], p = cur();
     $('mode').textContent = st.live ? 'Acum în direct · ' + CANALE[st.canal].nume : 'Ascultare la cerere · ' + CANALE[st.canal].nume;
     $('golive').hidden = st.live;
-    if (!p) { $('title').textContent = d && !d.piese.length ? 'Playlistul este gol' : 'Se încarcă…'; $('meta').textContent = ''; return; }
+    if (!p) { $('title').textContent = d && !d.piese.length ? 'Playlistul este gol' : 'Se încarcă…'; $('meta').textContent = ''; $('cred').textContent = ''; return; }
     $('title').textContent = p.titlu;
-    $('meta').textContent = [p.autor, dateRo(p.data)].filter(Boolean).join(' · ');
+    $('meta').textContent = [who(p), dateRo(p.data)].filter(Boolean).join(' · ');
+    $('cred').textContent = credits(p);
     $('total').textContent = fmt(p.durata);
     var nx = st.live && d.piese.length > 1 ? d.piese[(st.idx + 1) % d.piese.length] : null;
     $('next').textContent = nx ? 'Urmează: ' + nx.titlu : '';
     if ('mediaSession' in navigator) {
       try {
-        navigator.mediaSession.metadata = new MediaMetadata({ title: p.titlu, artist: p.autor || 'Biserica Betel Constanța', album: 'Radio Betel · ' + CANALE[st.canal].nume, artwork: [{ src: LOGO, sizes: '512x512', type: 'image/png' }] });
+        navigator.mediaSession.metadata = new MediaMetadata({ title: p.titlu, artist: who(p) || 'Biserica Betel Constanța', album: 'Radio Betel · ' + CANALE[st.canal].nume, artwork: [{ src: LOGO, sizes: '512x512', type: 'image/png' }] });
       } catch (e) { /* browser fără MediaMetadata */ }
     }
   }
@@ -277,7 +287,7 @@
       var i = (lp.idx + k) % d.piese.length, p = d.piese[i];
       var li = el('li'), row = el('div', 'item' + (k === 0 ? ' cur' : ''));
       row.append(el('span', 'at', k === 0 ? 'Acum' : clock(new Date(at))));
-      var t = el('span', 't', p.titlu); if (p.autor) t.append(el('span', 's', p.autor));
+      var t = el('span', 't', p.titlu); if (who(p)) t.append(el('span', 's', who(p)));
       row.append(t, el('span', 'd', fmt(p.durata)));
       li.append(row); ol.append(li);
       at += p.durata * 1000;
@@ -296,7 +306,7 @@
       var b = el('button', 'item' + (!st.live && st.idx === x.i ? ' cur' : ''));
       b.type = 'button';
       b.append(el('span', 'at', x.p.data ? x.p.data.slice(8, 10) + '.' + x.p.data.slice(5, 7) : ''));
-      var t = el('span', 't', x.p.titlu); if (x.p.autor) t.append(el('span', 's', x.p.autor));
+      var t = el('span', 't', x.p.titlu); if (who(x.p)) t.append(el('span', 's', who(x.p)));
       b.append(t, el('span', 'd', fmt(x.p.durata)));
       b.addEventListener('click', function () { playOnDemand(x.i); });
       var li = el('li'); li.append(b); ol.append(li);
