@@ -19,7 +19,10 @@ Instalare (o singură dată, pe calculatorul care publică):
 Exemple:
   python publica.py predici "Serviciu 11 oct.mp4" --titlu "Credința care biruiește" --autor "Pastor Ion Popescu" \
          --data 2026-10-11 --de 1:05:30 --pana 1:52:10 --sursa https://youtu.be/XXXXXXXXXXX
-  python publica.py muzica "Laudă - Doamne, Tu ești.mp3" --titlu "Doamne, Tu ești" --autor "Grupul de laudă Betel"
+  python publica.py muzica "Laudă - Doamne, Tu ești.mp3" --titlu "Doamne, Tu ești" --autor "Grupul de laudă Betel" \
+         --autori "Text și muzică: Grupul de laudă Betel"
+  python publica.py muzica "Mare esti Tu.wav" --titlu "Mare ești Tu" --autor "Tineretul Betel" --cover \
+         --autori "Chris Tomlin, Jesse Reeves, Ed Cash" --traducere "Daniel Ionescu" --original "How Great Is Our God (Chris Tomlin)"
   python publica.py predici fisier.mp4 --titlu "Test" --doar-local     (fără urcare: verifică doar conversia)
 
 După rulare: încărcați pe GitHub fișierul JSON modificat (sau folosiți --push dacă folderul e o clonă git).
@@ -94,6 +97,11 @@ def urca(path, identifier, a):
         import internetarchive as ia
     except ImportError:
         fail('Lipsește pachetul internetarchive: pip install internetarchive, apoi ia configure.')
+    credite = '\n'.join(x for x in [
+        ('Cover (interpretare a Bisericii Betel Constanța)' if a.cover else ''),
+        ('Autori: ' + a.autori if a.autori else ''),
+        ('Traducerea: ' + a.traducere if a.traducere else ''),
+        ('Original: ' + a.original if a.original else '')] if x)
     meta = {
         'mediatype': 'audio',
         'collection': 'opensource_audio',
@@ -101,8 +109,8 @@ def urca(path, identifier, a):
         'creator': a.autor or 'Biserica Betel Constanța',
         'date': a.data or dt.date.today().isoformat(),
         'language': 'rum',
-        'subject': ['Biserica Betel Constanța', 'Radio Betel', CANALE[a.canal]['nume']],
-        'description': (a.descriere or '') + ('\nSursa: ' + a.sursa if a.sursa else ''),
+        'subject': ['Biserica Betel Constanța', 'Radio Betel', CANALE[a.canal]['nume']] + (['cover'] if a.cover else []),
+        'description': '\n'.join(x for x in [a.descriere, credite, ('Sursa: ' + a.sursa if a.sursa else '')] if x),
     }
     name = os.path.basename(path)
     print('Urc pe archive.org: %s …' % identifier)
@@ -117,7 +125,11 @@ def main():
     p.add_argument('canal', choices=sorted(CANALE))
     p.add_argument('fisier', help='înregistrarea (mp4, m4a, mp3, wav …)')
     p.add_argument('--titlu', required=True)
-    p.add_argument('--autor', default='', help='predicatorul / interpretul')
+    p.add_argument('--autor', default='', help='predicatorul / cine cântă (ex. Grupul de laudă Betel)')
+    p.add_argument('--autori', default='', help='muzică: autorii cântării (text și muzică); obligatoriu la muzică ("Tradițional" dacă nu se știu)')
+    p.add_argument('--cover', action='store_true', help='muzică: cântarea altor autori, interpretată de biserică')
+    p.add_argument('--traducere', default='', help='muzică: autorul traducerii în română')
+    p.add_argument('--original', default='', help='muzică: versiunea originală (titlu, interpret)')
     p.add_argument('--data', default='', help='AAAA-LL-ZZ (data predicii)')
     p.add_argument('--de', help='începutul fragmentului (hh:mm:ss)')
     p.add_argument('--pana', help='sfârșitul fragmentului (hh:mm:ss)')
@@ -135,6 +147,13 @@ def main():
         fail('Data trebuie scrisă AAAA-LL-ZZ (ex. 2026-10-11).')
     if a.sursa and not a.sursa.startswith('https://'):
         fail('Linkul sursei trebuie să înceapă cu https://')
+    for k in ('titlu', 'autor', 'autori', 'traducere', 'original'):
+        setattr(a, k, ' '.join(getattr(a, k).split()))
+    if a.canal == 'muzica' and not a.autori:
+        fail('La muzică, scrieți autorii cântării cu --autori (text și muzică; "Tradițional" dacă nu se știu). '
+             'Mențiunea autorilor este obligatorie, chiar și la cântările interpretate de biserică.')
+    if a.canal != 'muzica' and (a.cover or a.autori or a.traducere or a.original):
+        fail('--cover, --autori, --traducere și --original sunt doar pentru canalul muzica.')
     de, pana = timp(a.de), timp(a.pana)
     if de is not None and pana is not None and pana <= de:
         fail('--pana trebuie să fie după --de.')
@@ -167,6 +186,14 @@ def main():
         item = {'titlu': a.titlu, 'autor': a.autor, 'data': a.data, 'url': url, 'durata': sec}
         if a.sursa:
             item['sursa'] = a.sursa
+        if a.canal == 'muzica':
+            item['autori'] = a.autori
+            if a.cover:
+                item['cover'] = True
+            if a.traducere:
+                item['traducere'] = a.traducere
+            if a.original:
+                item['original'] = a.original
         pl['piese'].append(item)
         with open(jpath, 'w', encoding='utf-8') as f:
             json.dump(pl, f, ensure_ascii=False, indent=2)
