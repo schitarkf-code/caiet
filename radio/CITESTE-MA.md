@@ -36,6 +36,20 @@
 
 Pentru muzică, procedura e aceeași, cu `muzica` în loc de `predici` (MP3 stereo la 128 kbps). Opțiunea `--doar-local` face doar conversia, fără urcare, ca să verifici rezultatul.
 
+## Publicarea unei cântări (Muzică)
+Procedura e aceeași, dar la muzică sunt obligatorii autorii cântării (`--autori`). Dacă nu se știu, scrie „Tradițional”.
+```
+python radio/unelte/publica.py muzica "Mare esti Tu.wav" --titlu "Mare ești Tu" --autor "Tineretul Betel" --cover ^
+       --autori "Chris Tomlin, Jesse Reeves, Ed Cash" --traducere "Daniel Ionescu" --original "How Great Is Our God (Chris Tomlin)"
+```
+- `--autor`: cine cântă (Grupul de laudă, Tineretul, Corul…).
+- `--cover`: cântarea altor autori, interpretată de biserică.
+- `--autori`: textul și muzica.
+- `--traducere`: autorul traducerii în română (opțional).
+- `--original`: versiunea originală (opțional).
+
+În radio și în aplicație apare „Tineretul Betel · cover”, iar dedesubt „Autori: … · Traducerea: … · Original: …”. Aceleași date ajung și în descrierea fișierului de pe archive.org.
+
 ## În Caietul de ucenicie
 Varianta compactă a playerului: `https://<utilizator>.github.io/caiet/radio/?compact=1&canal=predici`. Integrarea în aplicație (bară de redare care rămâne activă cât navighezi) se face în pasul următor.
 
